@@ -1,3 +1,4 @@
+from picamera2 import Picamera2
 import cv2
 import numpy as np
 import serial
@@ -6,27 +7,14 @@ import time
 last_send_time = 0
 send_interval = 1  # giây
 
-
 # --- Cấu hình UART ---
 try:
-    # ser = serial.Serial('/dev/ttyS0', 115200, timeout=1)  # hoặc '/dev/ttyUSB0' nếu dùng USB-UART
-    ser = serial.Serial('COM1', 115200, timeout=1)  # hoặc '/dev/ttyUSB0' nếu dùng USB-UART
-
+    ser = serial.Serial('/dev/ttyS0', 115200, timeout=1)
     time.sleep(2)
     print("✅ Serial kết nối thành công.")
 except:
     ser = None
     print("⚠️ Không thể mở cổng Serial.")
-
-# --- Hàm gửi offset mục tiêu ---
-# def send_target_offset(x, y, color):
-#     center_x, center_y = 320, 240  # Tâm khung hình
-#     dx = x - center_x
-#     dy = y - center_y
-#     message = f"{color}:{dx},{dy}\n"
-#     if ser:
-#         ser.write(message.encode())
-#         print("📤 Gửi offset:", message.strip())
 
 def send_target_offset(x, y, color):
     global last_send_time
@@ -39,38 +27,47 @@ def send_target_offset(x, y, color):
         if ser:
             ser.write(message.encode())
             print("📤 Gửi offset:", message.strip())
-        last_send_time = now  # cập nhật thời gian gửi gần nhất
+        last_send_time = now
 
-# --- Mở camera ---
-cap = cv2.VideoCapture(0)
+
+# --- Khởi động camera ---
+picam2 = Picamera2()
+picam2.preview_configuration.main.size = (640, 480)
+# picam2.preview_configuration.main.format = "RGB888"
+picam2.configure("preview")
+picam2.start()
+time.sleep(1)
+
+kernel = np.ones((5, 5), np.uint8)
 
 while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("❌ Không đọc được khung hình.")
-        break
-
-    frame = cv2.resize(frame, (640, 480))
+    frame = picam2.capture_array()
+    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # --- Vùng màu ---
-    lower_red1 = np.array([0, 120, 70])
+    # --- Cập nhật vùng màu đã tinh chỉnh thực tế ---
+    lower_red1 = np.array([0, 100, 100])
     upper_red1 = np.array([10, 255, 255])
-    lower_red2 = np.array([170, 120, 70])
+    lower_red2 = np.array([160, 100, 100])
     upper_red2 = np.array([180, 255, 255])
-    lower_yellow = np.array([20, 100, 100])
-    upper_yellow = np.array([30, 255, 255])
-    lower_blue = np.array([100, 150, 0])
-    upper_blue = np.array([140, 255, 255])
 
-    # --- Mặt nạ ---
+    lower_yellow = np.array([18, 100, 100])
+    upper_yellow = np.array([35, 255, 255])
+
+    lower_blue = np.array([90, 100, 100])
+    upper_blue = np.array([130, 255, 255])
+
+    # --- Tạo mask và lọc nhiễu ---
     mask_red = cv2.inRange(hsv, lower_red1, upper_red1) | cv2.inRange(hsv, lower_red2, upper_red2)
     mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
     mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
 
-    # --- Hàm xử lý từng màu ---
+    mask_red = cv2.morphologyEx(mask_red, cv2.MORPH_OPEN, kernel)
+    mask_yellow = cv2.morphologyEx(mask_yellow, cv2.MORPH_OPEN, kernel)
+    mask_blue = cv2.morphologyEx(mask_blue, cv2.MORPH_OPEN, kernel)
+
     def process_mask(mask, color_name, bgr_color):
-        contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area > 500:
@@ -79,25 +76,20 @@ while True:
                 cv2.circle(frame, center, int(radius), bgr_color, 2)
                 cv2.putText(frame, color_name, (center[0]-20, center[1]-20),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, bgr_color, 2)
-
-                # Gửi độ lệch mục tiêu
                 send_target_offset(center[0], center[1], color_name)
-                break  # chỉ gửi 1 mục tiêu mỗi màu
+                break
 
     process_mask(mask_red, "Red", (0, 0, 255))
     process_mask(mask_yellow, "Yellow", (0, 255, 255))
     process_mask(mask_blue, "Blue", (255, 0, 0))
 
-    # Vẽ tâm ảnh
     cv2.drawMarker(frame, (320, 240), (255, 255, 255), markerType=cv2.MARKER_CROSS, markerSize=10)
-
     cv2.imshow("Target Alignment", frame)
+    # cv2.setMouseCallback("Target Alignment", mouse_callback)  # DEBUG HSV
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-cap.release()
 if ser:
     ser.close()
 cv2.destroyAllWindows()
-
