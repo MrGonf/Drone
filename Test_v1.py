@@ -11,38 +11,50 @@ send_interval = 1  # giây
 try:
     ser = serial.Serial('/dev/ttyS0', 115200, timeout=1)
     time.sleep(2)
-    print("✅ Serial kết nối thành công.")
+    print("Serial kết nối thành công.")
 except:
     ser = None
-    print("⚠️ Không thể mở cổng Serial.")
+    print("Không thể mở cổng Serial.")
 
 def send_target_offset(x, y, color):
     global last_send_time
     now = time.time()
     if now - last_send_time >= send_interval:
-        center_x, center_y = 320, 240
-        dx = x - center_x
+        height, width, _ = frame.shape
+        center_x, center_y = width // 2, height // 2  # Tính trung tâm của ảnh
+        # center_x, center_y = 320, 240
+        dx = center_x - x
         dy = y - center_y
         message = f"{color}:{dx},{dy}\n"
         if ser:
             ser.write(message.encode())
-            print("📤 Gửi offset:", message.strip())
+            print("Toa do:", message.strip())
         last_send_time = now
 
 
-# --- Khởi động camera ---
-picam2 = Picamera2()
-picam2.preview_configuration.main.size = (640, 480)
-# picam2.preview_configuration.main.format = "RGB888"
-picam2.configure("preview")
-picam2.start()
-time.sleep(1)
+# # --- Khởi động camera ---
+# picam2 = Picamera2()
+# picam2.preview_configuration.main.size = (640, 480)
+# # picam2.preview_configuration.main.format = "RGB888"
+# picam2.configure("preview")
+# picam2.start()
+# time.sleep(1)
+# --- Khởi động video từ file ---
+video_path = 'Vid_1.mp4'  # Đường dẫn đến video file
+cap = cv2.VideoCapture(video_path)
 
+if not cap.isOpened():
+    print("Không thể mở video.")
+    exit()
 kernel = np.ones((5, 5), np.uint8)
 
 while True:
-    frame = picam2.capture_array()
-    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    # frame = picam2.capture_array()
+    ret, frame = cap.read()
+    if not ret:
+        print("Đã đến cuối video hoặc có lỗi khi đọc video.")
+        break
+    # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     # --- Cập nhật vùng màu đã tinh chỉnh thực tế ---
@@ -82,8 +94,9 @@ while True:
     process_mask(mask_red, "Red", (0, 0, 255))
     process_mask(mask_yellow, "Yellow", (0, 255, 255))
     process_mask(mask_blue, "Blue", (255, 0, 0))
-
-    cv2.drawMarker(frame, (320, 240), (255, 255, 255), markerType=cv2.MARKER_CROSS, markerSize=10)
+    height, width, _ = frame.shape
+    center_x, center_y = width // 2, height // 2 
+    cv2.drawMarker(frame, (center_x, center_y), (255, 255, 255), markerType=cv2.MARKER_CROSS, markerSize=10)
     cv2.imshow("Target Alignment", frame)
     # cv2.setMouseCallback("Target Alignment", mouse_callback)  # DEBUG HSV
 
